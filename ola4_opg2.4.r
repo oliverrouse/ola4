@@ -1,7 +1,15 @@
+#### Pakker ####
 library(httr)
 library(rvest)
+library(DBI)
+library(RMariaDB)
+library(tidyverse)
+library(logger)
 
-####Opgave 2.4 - Scrape & SQL med Miljødata ####
+#### Opgave 2.4 - Scrape & SQL med Miljødata ####
+
+#### Starter logger ####
+log_appender(appender_file("miljo_log"))
 
 #Headers
 headers <- add_headers(
@@ -12,7 +20,7 @@ headers <- add_headers(
   `user-agent` = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 )
 
-#Liste med URL'er til de forskellige sider
+## Liste med URL'er til de forskellige sider
 urls <- list(
   "HCAB" = "https://envs2.au.dk/Luftdata/Presentation/table/Copenhagen/HCAB",
   "ANHO" = "https://envs2.au.dk/Luftdata/Presentation/table/Rural/ANHO",
@@ -22,8 +30,11 @@ urls <- list(
 
 #Funktion til at hente data fra en URL
 fetch_data <- function(url) {
+  log_info(paste("Fetching data from URL:", url))
+  
   # Send GET-anmodning for at hente CSRF-token
   get_response <- GET(url, headers)
+  log_info(paste("GET request returned status code:", get_response$status_code))
   
   # Kontroller om GET-anmodningen var succesfuld
   if (get_response$status_code == 200) {
@@ -72,7 +83,7 @@ fetch_data <- function(url) {
   
   # Hent data efter POST-anmodning
   if (post_response$status_code == 200) {
-    print(paste("POST request successful for", url))
+    log_info(paste("POST request successful for", url))
     
     # Parse HTML-indholdet fra POST-anmodningen
     post_page <- read_html(content(post_response, as = "text"))
@@ -83,111 +94,73 @@ fetch_data <- function(url) {
       html_table(header = TRUE)
     
   } else {
-    stop("Failed to fetch data with POST request for URL:", url, "Status code: ", post_response$status_code)
+    log_error(paste("GET request failed for URL:", url, "with status code:", get_response$status_code))
+    stop("GET request failed")
   }
 }
 
-#Hent data fra alle URL'er og gem i separate dataframes
-data_hcab <- fetch_data(urls$HCAB)
-data_anho <- fetch_data(urls$ANHO)
-data_aarh3 <- fetch_data(urls$AARH3)
-data_risoe <- fetch_data(urls$RISOE)
+#### Hent data fra alle URL'er og gem i separate dataframes ####
+log_info("Fetching data from all URL's")
+data_hcab <- data.frame(fetch_data(urls$HCAB))
+data_anho <- data.frame(fetch_data(urls$ANHO))
+data_aarh3 <- data.frame(fetch_data(urls$AARH3))
+data_risoe <- data.frame(fetch_data(urls$RISOE))
+log_info("Data hentet")
 
 
-# Gem som RDS fil 1 gang
-saveRDS(data_hcab, "Documents/Dataanlyse/1_semester/R/OLA4/HCAB_table.rds")
-saveRDS(data_anho, "Documents/Dataanlyse/1_semester/R/OLA4/ANHO_table.rds")
-saveRDS(data_aarh3, "Documents/Dataanlyse/1_semester/R/OLA4/AARH3_table.rds")
-saveRDS(data_risoe, "Documents/Dataanlyse/1_semester/R/OLA4/RISOE_table.rds")
+#### Opsætning af datatyper, alt undtagen tid til numeric, måletidspunkt til POSIXct ####
+## Hcab
+data_hcab[,-1] <- lapply(data_hcab[,-1], function(x) as.numeric(gsub(",", ".", x)))
+data_hcab$scrapedate <- Sys.time()
+data_hcab$Målt..starttid. <- as.POSIXct(data_hcab$Målt..starttid., format="%d-%m-%Y %H:%M")
+data_hcab[,c(1,9)] <- data_hcab[,c(1,9)] + 3600 # SQL trækker én time fra, ligegyldigt hvad jeg gør :')
 
-# Gem som RDS fil 2 gang
-saveRDS(data_hcab, "Documents/Dataanlyse/1_semester/R/OLA4/HCAB_table_v2.rds")
-saveRDS(data_anho, "Documents/Dataanlyse/1_semester/R/OLA4/ANHO_table_v2.rds")
-saveRDS(data_aarh3, "Documents/Dataanlyse/1_semester/R/OLA4/AARH3_table_v2.rds")
-saveRDS(data_risoe, "Documents/Dataanlyse/1_semester/R/OLA4/RISOE_table_v2.rds")
+## Anho
+data_anho[,-1] <- lapply(data_anho[,-1], function(x) as.numeric(gsub(",", ".", x)))
+data_anho$scrapedate <- Sys.time()
+data_anho$Målt..starttid. <- as.POSIXct(data_anho$Målt..starttid., format="%d-%m-%Y %H:%M")
+data_anho[,c(1,4)] <- data_anho[,c(1,4)] + 3600 # SQL trækker én time fra, ligegyldigt hvad jeg gør :')
 
+## Aarh3
+data_aarh3[,-1] <- lapply(data_aarh3[,-1], function(x) as.numeric(gsub(",", ".", x)))
+data_aarh3$scrapedate <- Sys.time()
+data_aarh3$Målt..starttid. <- as.POSIXct(data_aarh3$Målt..starttid., format="%d-%m-%Y %H:%M")
+data_aarh3[,c(1,6)] <- data_aarh3[,c(1,6)] + 3600 # SQL trækker én time fra, ligegyldigt hvad jeg gør :')
 
-#Hent RDS 1 scrape
-data_hcab_1_scrape <- readRDS("Documents/Dataanlyse/1_semester/R/OLA4/HCAB_table.rds")
-data_anho_1_scrape <- readRDS("Documents/Dataanlyse/1_semester/R/OLA4/ANHO_table.rds")
-data_aarh3_1_scrape <- readRDS("Documents/Dataanlyse/1_semester/R/OLA4/AARH3_table.rds")
-data_risoe_1_scrape <- readRDS("Documents/Dataanlyse/1_semester/R/OLA4/RISOE_table.rds")
+## Risoe
+data_risoe[,-1] <- lapply(data_risoe[,-1], function(x) as.numeric(gsub(",", ".", x)))
+data_risoe$scrapedate <- Sys.time()
+data_risoe$Målt..starttid. <- as.POSIXct(data_risoe$Målt..starttid., format="%d-%m-%Y %H:%M")
+data_risoe[,c(1,7)] <- data_risoe[,c(1,7)] + 3600 # SQL trækker én time fra, ligegyldigt hvad jeg gør :')
 
-#Hent RDS 2 scrape
-data_hcab_2_scrape <- readRDS("Documents/Dataanlyse/1_semester/R/OLA4/HCAB_table_v2.rds")
-data_anho_2_scrape <- readRDS("Documents/Dataanlyse/1_semester/R/OLA4/ANHO_table_v2.rds")
-data_aarh3_2_scrape <- readRDS("Documents/Dataanlyse/1_semester/R/OLA4/AARH3_table_v2.rds")
-data_risoe_2_scrape <- readRDS("Documents/Dataanlyse/1_semester/R/OLA4/RISOE_table_v2.rds")
+#### Importer til SQL ####
+##### Connection #####
+log_info("Opretter forbindelse til database")
+con <- dbConnect(MariaDB(),
+                 host="localhost",
+                 db="miljo",
+                 user="root",
+                 password = Sys.getenv("password"))
 
+##### Henter eksisterende data til anti-join #####
+hcab_old <- dbReadTable(con, "hcab")
+anho_old <- dbReadTable(con, "anho")
+aarh3_old <- dbReadTable(con, "aarh3")
+risoe_old <- dbReadTable(con, "risoe")
 
-# Funktion til at hente miljødata 
-#Skal lave en funktion hvor jeg sætter linket ind og så scraper funktionend på ny
-data_hcab1 <-fetch_data("https://envs2.au.dk/Luftdata/Presentation/table/Copenhagen/HCAB")
+##### Anti-join for at finde forskellene #####
+## Måletidspunktet bliver brugt som unik identifier
+hcab_new <- anti_join(data_hcab, hcab_old, by = "Målt..starttid.")
+anho_new <- anti_join(data_anho, anho_old, by = "Målt..starttid.")
+risoe_new <- anti_join(data_risoe, risoe_old, by = "Målt..starttid.")
+aarh3_new <- anti_join(data_aarh3, aarh3_old, by = "Målt..starttid.")
 
+##### WriteTable #####
+log_info(paste0("Opdaterer databasen med ", nrow(hcab_new), " nye rækker"))
+dbWriteTable(con, "hcab", hcab_new, append = T)
+dbWriteTable(con, "anho", anho_new, append = T)
+dbWriteTable(con, "risoe", risoe_new, append = T)
+dbWriteTable(con, "aarh3", aarh3_new, append = T)
 
-#få over i sql som database
-
-#Hent librarys 
-install.packages("DBI")
-install.packages("RMariaDB") 
-library(DBI)
-library(RMariaDB)
-library(keyring)
-
-key_set("my_password", "MySQL")
-password <- key_get("my_password", "MySQL")
-
-#Lav en connection 
-con=dbConnect(MariaDB(),
-               db="miljodata",
-               host="localhost",
-               port=3306,
-               user="root",
-               password=password
-)
-
-#Vi bruger dbWriteTable til at skrive en dataframe og få lavet den som en tabel
-dbWriteTable(con,"hcab",data_hcab_1_scrape, overwrite = T)
-dbWriteTable(con, "anho", data_anho_1_scrape, overwrite = TRUE)
-dbWriteTable(con, "aarh3", data_aarh3_1_scrape, overwrite = TRUE)
-dbWriteTable(con, "risoe", data_risoe_1_scrape, overwrite = TRUE)
-
-#hcab, risoe, anho og aarh3
-
-# Funktion til at tilføje ny data til SQL database for 'hcab', 'anho', 'risoe' og 'aarh3'
-update_data <- function(con, table_name, new_data) {
-  # 1. Hent det seneste tidsstempel fra databasen
-  latest_timestamp <- dbGetQuery(con, paste0("SELECT MAX(`Målt (starttid)`) AS max_time FROM ", table_name, ";"))
-  
-  # Hvis der ikke findes data i databasen (første kørsel)
-  if (is.na(latest_timestamp$max_time[1])) {
-    print("Ingen eksisterende data i databasen. Indsætter hele datasættet.")
-    dbWriteTable(con, table_name, new_data, append = TRUE, row.names = FALSE)
-    return()
-  }
-  
-  # Konverter seneste tidsstempel
-  latest_timestamp <- as.POSIXct(latest_timestamp$max_time[1], format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
-  print(paste("Seneste tidsstempel i databasen:", latest_timestamp))
-  
-  # 2. Konverter tidsstempler i det nye datasæt
-  new_data$`Målt (starttid)` <- as.POSIXct(new_data$`Målt (starttid)`, format = "%d-%m-%Y %H:%M", tz = "UTC")
-  
-  # 3. Filtrér kun rækker med tidsstempler nyere end det seneste
-  new_rows <- new_data[new_data$`Målt (starttid)` > latest_timestamp, ]
-  print(paste("Antal nye rækker fundet:", nrow(new_rows)))
-  
-  # 4. Tilføj kun nye rækker til databasen
-  if (nrow(new_rows) > 0) {
-    dbWriteTable(con, table_name, new_rows, append = TRUE, row.names = FALSE)
-    print(paste(nrow(new_rows), "nye rækker tilføjet til tabellen", table_name))
-  } else {
-    print("Ingen nye rækker at tilføje.")
-  }
-}
-
-# Kør funktionen for at få data ind i databasen for 'hcab', 'anho', 'risoe', og 'aarh3'
-update_data(con, "hcab", data_hcab_2_scrape)
-update_data(con, "anho", data_anho_2_scrape)
-update_data(con, "aarh3", data_aarh3_2_scrape)
-update_data(con, "risoe", data_risoe_2_scrape)
+## Disconnect
+dbDisconnect(con)
